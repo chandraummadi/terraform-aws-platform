@@ -134,5 +134,3 @@ for why the git-ref path is the default and the registry path is opt-in.
 
 [Apache License 2.0](LICENSE)
 =======
-# terraform-aws-platform
->>>>>>> 02de8d21abe1838f59b907a00460f89b998dbab0
