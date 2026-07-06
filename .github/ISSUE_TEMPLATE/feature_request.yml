@@ -1,0 +1,58 @@
+name: Feature Request / New Module Proposal
+description: Propose a new module, or a feature/variable on an existing one
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - New module proposal
+        - Feature on an existing module
+        - Platform/tooling improvement
+    validations:
+      required: true
+
+  - type: input
+    id: module
+    attributes:
+      label: Module (existing module name, or proposed new module name)
+      placeholder: "ec2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this solve? Reference docs/coding-standards.md if this affects naming/tagging/variable conventions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: composition
+    attributes:
+      label: Composition
+      description: For new modules — which existing modules would this compose with (inputs/outputs)? See docs/architecture.md's composition diagram.
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Usage example
+      render: hcl
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This follows the minimal-required / optional-advanced variable pattern (docs/coding-standards.md §3)
+        - label: I'm willing to open the PR for this

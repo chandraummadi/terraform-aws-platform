@@ -1,0 +1,18 @@
+# Modules listed here are, in addition to the default monorepo + git-ref
+# distribution (source = "git::...//modules/<name>?ref=<name>/vX.Y.Z"),
+# also mirrored to a dedicated "terraform-aws-<name>" repo on every release
+# so they can be consumed via the public Terraform Registry:
+#
+#   module "vpc" {
+#     source  = "app.terraform.io/<org>/vpc/aws"   # or registry.terraform.io/<org>/vpc/aws
+#     version = "1.0.0"
+#   }
+#
+# A module only needs to be listed here if you specifically want registry
+# distribution for it. This is empty until a module graduates to v1.0.0
+# (see docs/release-process.md, "Pre-1.0 Modules") and a decision is made
+# that it's worth maintaining a second distribution channel for it.
+#
+# modules:
+#   - vpc
+modules: []

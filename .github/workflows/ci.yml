@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "examples/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+      - ".tflint.hcl"
+  pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "examples/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+      - ".tflint.hcl"
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+env:
+  TF_VERSION: "1.9.5"
+  TFLINT_VERSION: "0.54.0"
+  TFSEC_VERSION: "1.28.13"
+  CHECKOV_VERSION: "3.2.252"
+
+jobs:
+  discover-modules:
+    name: Discover Modules
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.discover.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: discover
+        name: Build matrix from modules that actually contain .tf files
+        run: |
+          # Only include modules that have at least one .tf file — a scaffolded
+          # empty module/<name>/ directory (future sprint placeholder) is skipped
+          # rather than failing CI. This keeps Sprint 1's skeleton green while
+          # Sprint 2+ modules are added incrementally.
+          MODULES=$(find modules -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
+            if compgen -G "$dir/*.tf" > /dev/null; then
+              basename "$dir"
+            fi
+          done | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "modules=$MODULES" >> "$GITHUB_OUTPUT"
+          echo "Discovered modules: $MODULES"
+
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    needs: discover-modules
+    if: needs.discover-modules.outputs.modules != '[]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          version: ${{ env.TFSEC_VERSION }}
+
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          version: ${{ env.CHECKOV_VERSION }}
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive -diff
+
+      - name: Terraform init & validate (root + every module + every example)
+        run: |
+          set -e
+          for dir in . $(find modules -mindepth 1 -maxdepth 1 -type d) $(find modules examples -type d -name examples -prune -o -type d -print | grep '/examples/' || true); do
+            if compgen -G "$dir/*.tf" > /dev/null; then
+              echo "== terraform validate: $dir =="
+              (cd "$dir" && terraform init -backend=false -input=false && terraform validate)
+            fi
+          done
+
+      - name: TFLint
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: tfsec
+        # NOTE: no --soft-fail. This gate is meant to block merges on
+        # high/critical findings, per docs/coding-standards.md §5 and §10.
+        # Justified, scoped exceptions belong inline as
+        # `#tfsec:ignore:<rule-id>: <reason>` on the specific resource,
+        # never as a blanket flag here.
+        run: tfsec --minimum-severity HIGH --no-colour .
+
+      - name: Checkov
+        # NOTE: no repo-wide --skip-check. Any exception must be scoped to
+        # the specific resource with an inline justification comment, e.g.:
+        #   #checkov:skip=CKV_AWS_18: access logging centralized via
+        #   the org-wide CloudTrail/Config bucket, see docs/architecture.md
+        run: checkov -d . --framework terraform --compact --quiet
+
+  module-tests:
+    name: Module Tests (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    needs: [discover-modules, validate]
+    if: needs.discover-modules.outputs.modules != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.discover-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-${{ matrix.module }}-${{ hashFiles(format('modules/{0}/**/*.tf', matrix.module)) }}
+
+      - name: Discover and validate every example for this module
+        # NOTE: intentionally stops at `terraform validate`, not `plan`.
+        # `plan` needs live AWS credentials to refresh data sources
+        # (aws_availability_zones, aws_caller_identity, etc.) even for a
+        # syntactically-perfect config — this repo has no AWS account
+        # wired into CI by design (see docs/testing-strategy.md), so `plan`
+        # would fail for reasons that have nothing to do with the module's
+        # correctness. `validate` is fully static and catches type errors,
+        # bad references, and missing required arguments without ever
+        # touching AWS.
+        run: |
+          set -e
+          EXAMPLES_DIR="modules/${{ matrix.module }}/examples"
+          if [ ! -d "$EXAMPLES_DIR" ]; then
+            echo "No examples directory for ${{ matrix.module }} yet — skipping."
+            exit 0
+          fi
+          for example in "$EXAMPLES_DIR"/*/; do
+            [ -d "$example" ] || continue
+            if ! compgen -G "$example/*.tf" > /dev/null; then
+              echo "Skipping $example (no .tf files yet)"
+              continue
+            fi
+            echo "== Validating $example =="
+            (cd "$example" && terraform init -backend=false -input=false && terraform validate)
+          done
+
+  integration-tests:
+    name: Integration Tests (Terratest)
+    runs-on: ubuntu-latest
+    needs: [discover-modules, validate]
+    # Disabled by default — this requires a real AWS account to apply and
+    # destroy actual infrastructure, which this repo intentionally does not
+    # wire into CI (see docs/testing-strategy.md). To turn this on later:
+    # set the repo/org variable AWS_TESTS_ENABLED=true AND configure OIDC
+    # federation (no static access keys) in a follow-up PR.
+    if: vars.AWS_TESTS_ENABLED == 'true' && needs.discover-modules.outputs.modules != '[]' && hashFiles('tests/integration/go.mod') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('tests/integration/go.sum') }}
+      - name: Run Terratest
+        run: |
+          cd tests/integration
+          go mod download
+          go test -v -timeout 60m -count=1 ./...
+
+  required-checks:
+    name: Required Checks
+    runs-on: ubuntu-latest
+    needs: [validate, module-tests, integration-tests]
+    if: always()
+    steps:
+      - name: Gate on upstream job results
+        run: |
+          for result in "${{ needs.validate.result }}" "${{ needs.module-tests.result }}" "${{ needs.integration-tests.result }}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "A required job failed: $result"
+              exit 1
+            fi
+          done
+          echo "All required checks passed (or were correctly skipped for an empty module set)."

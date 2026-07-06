@@ -1,0 +1,84 @@
+name: Bug Report
+description: Report a bug in a module
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: input
+    id: module
+    attributes:
+      label: Module and version
+      description: Which module and version is affected? (e.g. vpc/v1.2.0)
+      placeholder: "vpc/v1.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: terraform-version
+    attributes:
+      label: Terraform version
+      placeholder: "1.9.5"
+    validations:
+      required: true
+
+  - type: input
+    id: aws-provider-version
+    attributes:
+      label: AWS provider version
+      placeholder: "6.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Terraform output / logs
+      render: shell
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Module configuration (remove sensitive values)
+      render: hcl
+      placeholder: |
+        module "vpc" {
+          source = "git::https://github.com/<org>/terraform-aws-platform.git//modules/vpc?ref=vpc/v1.2.0"
+          # ...
+        }
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for duplicates
+          required: true
+        - label: I tested with the latest tag for this module
+          required: true

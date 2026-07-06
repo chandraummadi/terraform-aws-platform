@@ -1,0 +1,20 @@
+name: Documentation
+description: Report a documentation gap or propose a doc change
+title: "[DOCS] "
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: File or module README affected
+      placeholder: "modules/vpc/README.md or docs/coding-standards.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: What's missing or wrong
+    validations:
+      required: true

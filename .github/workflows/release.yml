@@ -1,0 +1,165 @@
+name: Release
+
+# Triggers on PER-MODULE tags, e.g. vpc/v1.0.0, security-group/v1.2.1 —
+# NOT a single repo-wide v* tag. Each module in this monorepo is versioned
+# and released independently. See docs/release-process.md.
+on:
+  push:
+    tags:
+      - "*/v[0-9]+.[0-9]+.[0-9]+"
+      - "*/v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Module tag to release, e.g. vpc/v1.0.0"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (build + validate, publish nothing)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.9.5"
+
+jobs:
+  parse-tag:
+    name: Parse module + version from tag
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.parse.outputs.module }}
+      version: ${{ steps.parse.outputs.version }}
+      is_prerelease: ${{ steps.parse.outputs.is_prerelease }}
+    steps:
+      - id: parse
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+
+          # Expect "<module>/v<semver>"
+          if [[ ! "$TAG" =~ ^([a-z0-9-]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?)$ ]]; then
+            echo "::error::Tag '$TAG' does not match '<module>/vX.Y.Z' — repo-wide tags are not used, every module releases independently."
+            exit 1
+          fi
+
+          MODULE="${BASH_REMATCH[1]}"
+          VERSION="${BASH_REMATCH[2]}"
+          IS_PRERELEASE="false"
+          [[ "$VERSION" =~ - ]] && IS_PRERELEASE="true"
+
+          echo "module=$MODULE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+
+  validate-release:
+    name: Validate module
+    runs-on: ubuntu-latest
+    needs: parse-tag
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Module directory exists
+        run: |
+          test -d "modules/${{ needs.parse-tag.outputs.module }}" || { echo "::error::modules/${{ needs.parse-tag.outputs.module }} does not exist"; exit 1; }
+
+      - name: Terraform validate
+        run: |
+          cd "modules/${{ needs.parse-tag.outputs.module }}"
+          terraform init -backend=false
+          terraform validate
+
+      - name: CHANGELOG.md has an entry for this version
+        # NOTE: this checks the MODULE's own CHANGELOG.md
+        # (modules/<name>/CHANGELOG.md), not the repo root one — versioning
+        # is per module, so the changelog it's validated against must be
+        # per module too.
+        run: |
+          CHANGELOG="modules/${{ needs.parse-tag.outputs.module }}/CHANGELOG.md"
+          grep -q "## \[${{ needs.parse-tag.outputs.version }}\]" "$CHANGELOG" || {
+            echo "::error::$CHANGELOG has no entry for ${{ needs.parse-tag.outputs.version }}"
+            exit 1
+          }
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [parse-tag, validate-release]
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract this version's changelog section
+        run: |
+          CHANGELOG="modules/${{ needs.parse-tag.outputs.module }}/CHANGELOG.md"
+          awk -v version="${{ needs.parse-tag.outputs.version }}" '
+            /^## \[/ { in_section=0 }
+            $0 ~ "## \\[" version "\\]" { in_section=1; next }
+            in_section { print }
+          ' "$CHANGELOG" > release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.parse-tag.outputs.module }}/v${{ needs.parse-tag.outputs.version }}
+          name: "${{ needs.parse-tag.outputs.module }} v${{ needs.parse-tag.outputs.version }}"
+          body_path: release_notes.md
+          prerelease: ${{ needs.parse-tag.outputs.is_prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- Optional second distribution channel ---
+  # Consumers who want `source = "app.terraform.io/..."` / public-registry
+  # style `version = "x.y.z"` syntax instead of a git ref can do so ONLY for
+  # modules explicitly opted in via .registry-modules.yml, because the
+  # public Terraform Registry requires one GitHub repo per module
+  # (named terraform-aws-<name>). This job mirrors that one module's
+  # subtree into its own dedicated mirror repo on release, leaving the
+  # monorepo + git-ref path (the `release` job above) as the default for
+  # every module, with zero extra steps required.
+  mirror-to-registry-repo:
+    name: Mirror to registry repo (opt-in only)
+    runs-on: ubuntu-latest
+    needs: [parse-tag, validate-release, release]
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check opt-in list
+        id: check
+        run: |
+          MODULE="${{ needs.parse-tag.outputs.module }}"
+          if [ -f .registry-modules.yml ] && grep -qx "  - $MODULE" .registry-modules.yml; then
+            echo "opted_in=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "opted_in=false" >> "$GITHUB_OUTPUT"
+            echo "$MODULE is not in .registry-modules.yml — skipping registry mirror (this is the default; no action needed)."
+          fi
+
+      - name: Split module subtree and push to mirror repo
+        if: steps.check.outputs.opted_in == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_MIRROR_TOKEN }}
+        run: |
+          MODULE="${{ needs.parse-tag.outputs.module }}"
+          VERSION="${{ needs.parse-tag.outputs.version }}"
+          MIRROR_REPO="terraform-aws-${MODULE}"
+
+          git subtree split --prefix="modules/${MODULE}" -b "mirror-${MODULE}"
+          git remote add mirror "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository_owner }}/${MIRROR_REPO}.git" || true
+          git push mirror "mirror-${MODULE}:main" --force
+          git tag -f "v${VERSION}" "mirror-${MODULE}"
+          git push mirror "v${VERSION}" --force

@@ -1,0 +1,49 @@
+# --- Terraform ---
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!example.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+tfplan
+*.tfplan
+
+# --- Terratest / Go ---
+tests/integration/**/vendor/
+*.test
+*.out
+
+# --- terraform-docs backup files (in case a run is interrupted) ---
+*.md.bak
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Secrets (never commit these, even accidentally) ---
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# --- Local scratch ---
+/dist/
+/tmp/
