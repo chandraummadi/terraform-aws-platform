@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # terraform-aws-platform
 
 Production-grade, reusable Terraform module library for AWS, built to HashiCorp
