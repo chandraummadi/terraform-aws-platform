@@ -7,26 +7,73 @@ module in this repository (tag prefix `vpc/`, per `docs/coding-standards.md` §6
 
 ## [Unreleased]
 
+### Fixed
+
+- **`manage_default_security_group` now defaults to `true`, not `false`**
+  (checkov `CKV2_AWS_12`). AWS's own default security group allows all
+  traffic between members and all egress — that's exactly the permissive
+  default `docs/coding-standards.md` §5 prohibits, not an acceptable
+  AWS-managed default to leave alone. Every other `manage_default_*`
+  toggle in this module stays opt-in (least-surprise: don't touch what you
+  didn't ask this module to manage) — this one toggle is the deliberate
+  exception, because leaving it off by default meant every consumer using
+  this module's defaults shipped with a real security gap. Not a breaking
+  change note since no version has been tagged yet.
+- The default-flip above didn't fully satisfy `CKV2_AWS_12` on its own:
+  checkov statically parses `aws_default_security_group.this`'s
+  `dynamic "ingress"`/`"egress"` blocks and can't execute their `for_each`
+  to confirm the empty-list default resolves to zero rules (deny-all) at
+  apply time, so it fails conservatively rather than assume emptiness.
+  Added a documented `#checkov:skip=CKV2_AWS_12` on `aws_vpc.this`
+  explaining the reasoning, per §5's "documented, justified exceptions"
+  allowance — this rests on the AWS provider's documented
+  `aws_default_security_group` semantics, not an observed `terraform
+  apply` (no AWS account available per `docs/testing-strategy.md`).
+- Added a documented `#checkov:skip=CKV2_AWS_19` on the NAT Gateway EIP —
+  known checkov false positive (the check looks for EC2-instance
+  attachment; a NAT Gateway attachment is the correct and only intended
+  state for this EIP).
+
 ### Added
 
-- Initial release of the `vpc` module (Sprint 2).
-- VPC with configurable CIDR, DNS support/hostnames, instance tenancy.
-- Public and private subnets across an auto-selected or explicit set of
-  availability zones, with auto-derived or explicit CIDRs per tier.
-- Internet Gateway + public route table (opt-out via `create_public_subnets`).
-- NAT Gateway egress for private subnets, selectable via
-  `nat_gateway_strategy` as `single` (cost-optimized), `one_per_az` (HA), or
-  `none`.
-- Per-AZ private route tables so `one_per_az` NAT failover stays AZ-isolated.
-- Optional custom Network ACLs for public and/or private subnets —
-  deny-by-default when enabled with no explicit rules (no implicit
-  allow-all). Kept inline in `main.tf` rather than as a child module: NAT
-  Gateway and NACL logic are never independently versioned or called
-  directly by a consumer, so a submodule boundary would add indirection
-  without adding any consumer-facing capability (see README design notes).
-- Optional VPC Flow Logs to a caller-supplied destination (CloudWatch Log
-  Group or S3), with no IAM role/log group created by this module
-  (composability — that belongs to the `iam`/`cloudwatch` modules).
+- Full feature-parity expansion (aligned with `terraform-aws-modules/terraform-aws-vpc`
+  as the reference, adapted to this repo's `for_each`-over-`count` and
+  typed-`object()` standards per `docs/coding-standards.md` §3/§9):
+  - DHCP Options Set support.
+  - Secondary IPv4 CIDR blocks and IPAM pool CIDR sourcing.
+  - IPv6 dual-stack subnets, Egress-Only Internet Gateway, IPv6 default
+    routes.
+  - Five additional opt-in subnet tiers: `database`, `elasticache`,
+    `redshift`, `intra` (zero egress, not even NAT), `outpost`. All default
+    `false` — only `public`/`private` are on by default.
+  - Subnet groups: `aws_db_subnet_group`, `aws_elasticache_subnet_group`,
+    `aws_redshift_subnet_group`.
+  - NAT Gateway EIP reuse (`reuse_nat_ips` / `external_nat_ip_ids`).
+  - VPN Gateway + Customer Gateway + route propagation (public/private/intra).
+  - Default VPC Security Group / Network ACL / Route Table management
+    (opt-in, `false` by default — this module manages what it creates, not
+    AWS's account-level defaults, unless asked).
+  - VPC Block Public Access account/region control.
+- **VPC Flow Logs redesigned to close a real tfsec finding**: previously
+  required a caller-supplied destination ARN with no way to actually
+  provision one, so `enable_flow_logs = true` on its own produced a flow
+  log pointed at nothing verifiable. Now supports two modes:
+  - Self-contained (default): module creates its own CloudWatch Log Group
+    and a least-privilege IAM role/policy scoped to that one Log Group's
+    ARN (never `Resource = "*"`, per §5).
+  - Bring-your-own: `create_flow_log_cloudwatch_log_group = false` and/or
+    `create_flow_log_cloudwatch_iam_role = false` with an existing
+    `flow_log_destination_arn` / `flow_log_iam_role_arn` — e.g. to
+    centralize flow logs from many VPCs into one Log Group owned by the
+    `cloudwatch`/`iam` modules.
+  - S3 destinations supported via `flow_log_destination_type = "s3"`
+    (no IAM role needed for that path).
+- NAT Gateway and Network ACL logic kept inline in `main.tf` rather than as
+  child modules (see README design note) — neither is independently
+  versioned or called directly by a consumer, so a submodule boundary adds
+  indirection with no consumer-facing benefit.
+- Per-AZ private route tables so `one_per_az` NAT failover stays
+  AZ-isolated.
 - `examples/basic`: two-AZ VPC with public/private subnets and a single NAT
   Gateway.
 - Terratest suite (`tests/terratest/vpc_test.go`) applying `examples/basic`

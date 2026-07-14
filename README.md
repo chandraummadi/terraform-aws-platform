@@ -10,7 +10,7 @@ scanned for security and cost issues before it ships.
 | Sprint | Deliverable            | Status      |
 |--------|-------------------------|-------------|
 | 1      | Repository skeleton     | ✅ Complete |
-| 2      | `modules/vpc`            | 🔜 Next     |
+| 2      | `modules/vpc`            | 🚧 In review |
 | 3      | `modules/security-group` | ⏳ Planned  |
 | 4      | `modules/iam`            | ⏳ Planned  |
 | 5      | `modules/ec2`            | ⏳ Planned  |
