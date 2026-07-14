@@ -80,8 +80,11 @@ terraform-aws-platform/
 
 ## Requirements
 
-- Terraform `>= 1.6`
-- AWS Provider `~> 6.0`
+- Terraform `>= 1.6` (platform-wide minimum — individual modules may require
+  a higher floor; check that module's own `versions.tf` for what it
+  actually enforces)
+- AWS Provider `>= 6.0` (same: platform-wide minimum, modules may set a
+  higher floor)
 - [tflint](https://github.com/terraform-linters/tflint), [checkov](https://www.checkov.io/), [tfsec](https://aquasecurity.github.io/tfsec/), [terraform-docs](https://terraform-docs.io/) installed locally for pre-commit checks (also run in CI)
 
 ## Using a Module
@@ -133,4 +136,4 @@ for why the git-ref path is the default and the registry path is opt-in.
 ## License
 
 [Apache License 2.0](LICENSE)
-=======
+
