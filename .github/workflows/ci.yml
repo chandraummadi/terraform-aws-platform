@@ -24,10 +24,10 @@ permissions:
   checks: write
 
 env:
-  TF_VERSION: "1.9.5"
-  TFLINT_VERSION: "0.54.0"
-  TFSEC_VERSION: "1.28.13"
-  CHECKOV_VERSION: "3.2.252"
+  TF_VERSION: "1.15.8"
+  TFLINT_VERSION: "0.63.1"
+  TFSEC_VERSION: "1.28.14"
+  CHECKOV_VERSION: "3.3.8"
 
 jobs:
   discover-modules:
